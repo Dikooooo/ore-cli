@@ -276,7 +276,7 @@ impl Miner {
     }
 }
 
-fn fn calculate_multiplier(balance: u64, top_balance: u64) -> f64 {
+fn calculate_multiplier(balance: u64, top_balance: u64) -> f64 {
     1.0 + (balance as f64 / top_balance as f64).min(1.0f64)
 }
 
