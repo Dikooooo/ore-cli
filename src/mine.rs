@@ -216,6 +216,9 @@ impl Miner {
             bs58::encode(best_hash.h).into_string(),
             best_difficulty
         ));
+        if best_difficulty < min_difficulty_threshold {
+            std::process::exit()
+        }
 
         Solution::new(best_hash.d, best_nonce.to_le_bytes())
     }
