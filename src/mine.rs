@@ -182,7 +182,7 @@ impl Miner {
                                     }
                                 } else if i.id == 0 {
                                     progress_bar.set_message(format!(
-                                        "Mining... (difficulty {}, time {})",
+                                        "Mining... (but of fucking course {}, time {})",
                                         global_best_difficulty,
                                         format_duration(
                                             cutoff_time.saturating_sub(timer.elapsed().as_secs())
