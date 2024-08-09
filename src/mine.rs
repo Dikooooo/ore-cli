@@ -217,7 +217,7 @@ impl Miner {
             best_difficulty
         ));
         if best_difficulty < min_difficulty_threshold {
-            std::process::exit()
+            std::process::exit(0)
         }
 
         Solution::new(best_hash.d, best_nonce.to_le_bytes())
