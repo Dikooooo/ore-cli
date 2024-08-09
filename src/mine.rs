@@ -48,7 +48,7 @@ impl Miner {
             println!(
                 "\n\nStake: {} ORE\n{}  Multiplier: {:12}x",
                 amount_u64_to_string(proof.balance),
-                if last_hash_at.gt(&0) {
+                if last_hash_at > 0 {
                     format!(
                         "  Change: {} ORE\n",
                         amount_u64_to_string(proof.balance.saturating_sub(last_balance))
@@ -65,38 +65,41 @@ impl Miner {
             let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
 
             // Run drillx
-            if let Some(solution) = Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold)
-                    .await {
-                
-                // Build instruction set
-                let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
-                let mut compute_budget = 500_000;
-                if self.should_reset(config).await && rand::thread_rng().gen_range(0..100).eq(&0) {
-                    compute_budget += 100_000;
-                    ixs.push(ore_api::instruction::reset(signer.pubkey()));
-                }
+            let solution = Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32).await;
 
-                // Build mine ix
-                ixs.push(ore_api::instruction::mine(
-                    signer.pubkey(),
-                    signer.pubkey(),
-                    self.find_bus().await,
-                    solution,
-                ));
-
-                // Submit transaction
-                self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
-                    .await
-                    .ok();
-            } else {
+            // If the best difficulty is below the threshold, exit the program
+            if solution.difficulty() < min_difficulty_threshold {
                 eprintln!(
                     "{}",
-                    format!("Exiting: no solution found with difficulty above threshold ({})", min_difficulty_threshold)
-                        .red()
-                        .bold()
+                    format!(
+                        "Exiting: Best difficulty ({}) is below the threshold ({})",
+                        solution.difficulty(),
+                        min_difficulty_threshold
+                    ).red().bold()
                 );
                 std::process::exit(1);
             }
+
+            // Build instruction set
+            let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
+            let mut compute_budget = 500_000;
+            if self.should_reset(config).await && rand::thread_rng().gen_range(0..100).eq(&0) {
+                compute_budget += 100_000;
+                ixs.push(ore_api::instruction::reset(signer.pubkey()));
+            }
+
+            // Build mine ix
+            ixs.push(ore_api::instruction::mine(
+                signer.pubkey(),
+                signer.pubkey(),
+                self.find_bus().await,
+                solution,
+            ));
+
+            // Submit transaction
+            self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
+                .await
+                .ok();
         }
     }
 
@@ -105,8 +108,7 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
-        min_difficulty_threshold: u32, // New parameter for the threshold
-    ) -> Option<Solution> {
+    ) -> Solution {
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
         let global_best_difficulty = Arc::new(RwLock::new(0u32));
@@ -122,7 +124,7 @@ impl Miner {
                     let mut memory = equix::SolverMemory::new();
                     move || {
                         // Return if core should not be used
-                        if (i.id as u64).ge(&cores) {
+                        if (i.id as u64) >= cores {
                             return (0, 0, Hash::default());
                         }
 
@@ -143,11 +145,11 @@ impl Miner {
                                 &nonce.to_le_bytes(),
                             ) {
                                 let difficulty = hx.difficulty();
-                                if difficulty.gt(&best_difficulty) {
+                                if difficulty > best_difficulty {
                                     best_nonce = nonce;
                                     best_difficulty = difficulty;
                                     best_hash = hx;
-                                    if best_difficulty.gt(&*global_best_difficulty.read().unwrap())
+                                    if best_difficulty > *global_best_difficulty.read().unwrap()
                                     {
                                         *global_best_difficulty.write().unwrap() = best_difficulty;
                                     }
@@ -158,14 +160,14 @@ impl Miner {
                             if nonce % 100 == 0 {
                                 let global_best_difficulty =
                                     *global_best_difficulty.read().unwrap();
-                                if timer.elapsed().as_secs().ge(&cutoff_time) {
+                                if timer.elapsed().as_secs() >= cutoff_time {
                                     if i.id == 0 {
                                         progress_bar.set_message(format!(
                                             "Mining... (difficulty {})",
                                             global_best_difficulty,
                                         ));
                                     }
-                                    if global_best_difficulty.ge(&min_difficulty) {
+                                    if global_best_difficulty >= min_difficulty {
                                         // Mine until min difficulty has been met
                                         break;
                                     }
@@ -213,16 +215,12 @@ impl Miner {
             best_difficulty
         ));
 
-        if best_difficulty < min_difficulty_threshold {
-            None
-        } else {
-            Some(Solution::new(best_hash.d, best_nonce.to_le_bytes()))
-        }
+        Solution::new(best_hash.d, best_nonce.to_le_bytes())
     }
 
     pub fn check_num_cores(&self, cores: u64) {
         let num_cores = num_cpus::get() as u64;
-        if cores.gt(&num_cores) {
+        if cores > num_cores {
             println!(
                 "{} Cannot exceed available cores ({})",
                 "WARNING".bold().yellow(),
@@ -258,7 +256,7 @@ impl Miner {
             for account in accounts {
                 if let Some(account) = account {
                     if let Ok(bus) = Bus::try_from_bytes(&account.data) {
-                        if bus.rewards.gt(&top_bus_balance) {
+                        if bus.rewards > top_bus_balance {
                             top_bus_balance = bus.rewards;
                             top_bus = BUS_ADDRESSES[bus.id as usize];
                         }
@@ -267,6 +265,7 @@ impl Miner {
             }
             return top_bus;
         }
+
         // Otherwise return a random bus
         let i = rand::thread_rng().gen_range(0..BUS_COUNT);
         BUS_ADDRESSES[i]
