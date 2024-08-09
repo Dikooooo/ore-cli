@@ -283,4 +283,3 @@ fn calculate_multiplier(balance: u64, top_balance: u64) -> f64 {
         let remaining_seconds = seconds % 60;
         format!("{:02}:{:02}", minutes, remaining_seconds)
     }
-}
