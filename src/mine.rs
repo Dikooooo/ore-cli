@@ -39,12 +39,14 @@ impl Miner {
         // Start mining loop
         let mut last_hash_at = 0;
         let mut last_balance = 0;
-        let mut first_run = true; // Flag for the first loop iteration
+        let mut is_first_run = true;
 
         loop {
             // Fetch proof
             let config = get_config(&self.rpc_client).await;
-            let proof = get_updated_proof_with_authority(&self.rpc_client, signer.pubkey(), last_hash_at).await;
+            let proof =
+                get_updated_proof_with_authority(&self.rpc_client, signer.pubkey(), last_hash_at)
+                    .await;
             println!(
                 "\n\nStake: {} ORE\n{}  Multiplier: {:12}x",
                 amount_u64_to_string(proof.balance),
@@ -65,7 +67,13 @@ impl Miner {
             let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
 
             // Run drillx
-            let solution = Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold).await;
+            let solution = if is_first_run {
+                // First run, no difficulty check
+                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, 0).await
+            } else {
+                // Subsequent runs, with difficulty check
+                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold).await
+            };
 
             // Build instruction set
             let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
@@ -84,24 +92,12 @@ impl Miner {
             ));
 
             // Submit transaction
-            self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false).await.ok();
+            self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
+                .await
+                .ok();
 
-            if first_run {
-                // Set flag to false after the first run
-                first_run = false;
-            } else {
-                // Check difficulty after the first loop
-                if solution.difficulty < min_difficulty_threshold {
-                    eprintln!(
-                        "{}",
-                        format!(
-                            "Exiting: best difficulty ({}) is below the threshold ({})",
-                            solution.difficulty, min_difficulty_threshold
-                        ).red().bold()
-                    );
-                    break; // Exit the loop if difficulty is below the threshold
-                }
-            }
+            // After the first loop, set is_first_run to false
+            is_first_run = false;
         }
     }
 
@@ -110,7 +106,7 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
-        min_difficulty_threshold: u32,
+        min_difficulty_threshold: u32, // Parameter for the threshold
     ) -> Solution {
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
@@ -128,7 +124,7 @@ impl Miner {
                     move || {
                         // Return if core should not be used
                         if (i.id as u64).ge(&cores) {
-                            return (0, 0, Hash::default(), 0);
+                            return (0, 0, Hash::default());
                         }
 
                         // Pin to core
@@ -190,8 +186,20 @@ impl Miner {
                             nonce += 1;
                         }
 
-                        // Return the best nonce and difficulty
-                        (best_nonce, best_difficulty, best_hash, best_difficulty)
+                        // Check if the best difficulty is below the threshold
+                        if min_difficulty_threshold > 0 && best_difficulty < min_difficulty_threshold {
+                            eprintln!(
+                                "{}",
+                                format!("Exiting: best difficulty ({}) is below the threshold ({})",
+                                        best_difficulty,
+                                        min_difficulty_threshold
+                                ).red().bold()
+                            );
+                            std::process::exit(1);
+                        }
+
+                        // Return the best nonce
+                        (best_nonce, best_difficulty, best_hash)
                     }
                 })
             })
@@ -202,7 +210,7 @@ impl Miner {
         let mut best_difficulty = 0;
         let mut best_hash = Hash::default();
         for h in handles {
-            if let Ok((nonce, difficulty, hash, _)) = h.join() {
+            if let Ok((nonce, difficulty, hash)) = h.join() {
                 if difficulty > best_difficulty {
                     best_difficulty = difficulty;
                     best_nonce = nonce;
@@ -218,7 +226,6 @@ impl Miner {
             best_difficulty
         ));
 
-        // Return the Solution with difficulty
         Solution::new(best_hash.d, best_nonce.to_le_bytes())
     }
 
@@ -260,7 +267,7 @@ impl Miner {
             for account in accounts {
                 if let Some(account) = account {
                     if let Ok(bus) = Bus::try_from_bytes(&account.data) {
-                        if bus.rewards.gt(&top_bus_balance) {
+                    if bus.rewards.gt(&top_bus_balance) {
                             top_bus_balance = bus.rewards;
                             top_bus = BUS_ADDRESSES[bus.id as usize];
                         }
