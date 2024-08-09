@@ -26,6 +26,9 @@ use crate::{
 
 impl Miner {
     pub async fn mine(&self, args: MineArgs) {
+        // Initialize difficulty threshold
+        let min_difficulty_threshold: u32 = 1000; // Set your threshold value here
+
         // Open account, if needed.
         let signer = self.signer();
         self.open().await;
@@ -63,7 +66,7 @@ impl Miner {
 
             // Run drillx
             let solution =
-                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32)
+                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold)
                     .await;
 
             // Build instruction set
@@ -94,6 +97,7 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
+        min_difficulty_threshold: u32, // New parameter for the threshold
     ) -> Solution {
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
@@ -135,12 +139,10 @@ impl Miner {
                                     best_nonce = nonce;
                                     best_difficulty = difficulty;
                                     best_hash = hx;
-                                    // {{ edit_1 }}
                                     if best_difficulty.gt(&*global_best_difficulty.read().unwrap())
                                     {
                                         *global_best_difficulty.write().unwrap() = best_difficulty;
                                     }
-                                    // {{ edit_1 }}
                                 }
                             }
 
@@ -173,6 +175,18 @@ impl Miner {
 
                             // Increment nonce
                             nonce += 1;
+                        }
+
+                        // Check if the best difficulty is below the threshold
+                        if best_difficulty < min_difficulty_threshold {
+                            eprintln!(
+                                "{}",
+                                format!("Exiting: best difficulty ({}) is below the threshold ({})",
+                                        best_difficulty,
+                                        min_difficulty_threshold
+                                ).red().bold()
+                            );
+                            std::process::exit(1);
                         }
 
                         // Return the best nonce
@@ -261,11 +275,12 @@ impl Miner {
 }
 
 fn calculate_multiplier(balance: u64, top_balance: u64) -> f64 {
-    1.0 + (balance as f64 / top_balance as f64).min(1.0f64)
-}
+        1.0 + (balance as f64 / top_balance as f64).min(1.0f64)
+    }
 
-fn format_duration(seconds: u32) -> String {
-    let minutes = seconds / 60;
-    let remaining_seconds = seconds % 60;
-    format!("{:02}:{:02}", minutes, remaining_seconds)
+    fn format_duration(seconds: u32) -> String {
+        let minutes = seconds / 60;
+        let remaining_seconds = seconds % 60;
+        format!("{:02}:{:02}", minutes, remaining_seconds)
+    }
 }
