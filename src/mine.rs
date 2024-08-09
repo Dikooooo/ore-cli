@@ -172,7 +172,7 @@ impl Miner {
                                 if timer.elapsed().as_secs().ge(&cutoff_time) {
                                     if i.id == 0 {
                                         progress_bar.set_message(format!(
-                                            "Mining... (difficulty {})",
+                                            "Mining... (how in the fuck {})",
                                             global_best_difficulty,
                                         ));
                                     }
