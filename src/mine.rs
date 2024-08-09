@@ -64,10 +64,24 @@ impl Miner {
             // Calculate cutoff time
             let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
 
-            // Run drillx
-            let solution =
-                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold)
+            // Run drillx to find the best solution and its difficulty
+            let (solution, best_difficulty) =
+                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32)
                     .await;
+
+            // Exit if the best difficulty is below the threshold
+            if best_difficulty < min_difficulty_threshold {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "Exiting: best difficulty ({}) is below the threshold ({})",
+                        best_difficulty, min_difficulty_threshold
+                    )
+                    .red()
+                    .bold()
+                );
+                std::process::exit(1);
+            }
 
             // Build instruction set
             let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
@@ -97,8 +111,7 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
-        min_difficulty_threshold: u32, // New parameter for the threshold
-    ) -> Solution {
+    ) -> (Solution, u32) {
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
         let global_best_difficulty = Arc::new(RwLock::new(0u32));
@@ -177,26 +190,14 @@ impl Miner {
                             nonce += 1;
                         }
 
-                        // Check if the best difficulty is below the threshold
-                        if best_difficulty < min_difficulty_threshold && best_difficulty != global_best_difficulty{
-                            eprintln!(
-                                "{}",
-                                format!("Exiting: best difficulty ({}) is below the threshold ({})",
-                                        best_difficulty,
-                                        min_difficulty_threshold
-                                ).red().bold()
-                            );
-                            std::process::exit(1);
-                        }
-
-                        // Return the best nonce
+                        // Return the best nonce and difficulty
                         (best_nonce, best_difficulty, best_hash)
                     }
                 })
             })
             .collect();
 
-        // Join handles and return best nonce
+        // Join handles and return the best nonce and difficulty
         let mut best_nonce = 0;
         let mut best_difficulty = 0;
         let mut best_hash = Hash::default();
@@ -217,14 +218,14 @@ impl Miner {
             best_difficulty
         ));
 
-        Solution::new(best_hash.d, best_nonce.to_le_bytes())
+        (Solution::new(best_hash.d, best_nonce.to_le_bytes()), best_difficulty)
     }
 
     pub fn check_num_cores(&self, cores: u64) {
         let num_cores = num_cpus::get() as u64;
         if cores.gt(&num_cores) {
             println!(
-                "{} Cannot exceeds available cores ({})",
+                "{} Cannot exceed available cores ({})",
                 "WARNING".bold().yellow(),
                 num_cores
             );
@@ -275,11 +276,11 @@ impl Miner {
 }
 
 fn calculate_multiplier(balance: u64, top_balance: u64) -> f64 {
-        1.0 + (balance as f64 / top_balance as f64).min(1.0f64)
-    }
+    1.0 + (balance as f64 / top_balance as f64).min(1.0f64)
+}
 
-    fn format_duration(seconds: u32) -> String {
-        let minutes = seconds / 60;
-        let remaining_seconds = seconds % 60;
-        format!("{:02}:{:02}", minutes, remaining_seconds)
-    }
+fn format_duration(seconds: u32) -> String {
+    let minutes = seconds / 60;
+    let remaining_seconds = seconds % 60;
+    format!("{:02}:{:02}", minutes, remaining_seconds)
+}
