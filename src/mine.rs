@@ -27,7 +27,7 @@ use crate::{
 impl Miner {
     pub async fn mine(&self, args: MineArgs) {
         // Initialize difficulty threshold
-        let min_difficulty_threshold: u32 = 1000; // Set your threshold value here
+        let min_difficulty_threshold: u32 = 10; // Set your threshold value here
 
         // Open account, if needed.
         let signer = self.signer();
