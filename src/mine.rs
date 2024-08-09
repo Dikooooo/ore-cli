@@ -23,6 +23,7 @@ use crate::{
     },
     Miner,
 };
+
 impl Miner {
     pub async fn mine(&self, args: MineArgs) {
         // Initialize difficulty threshold
@@ -67,6 +68,12 @@ impl Miner {
             let (solution, best_difficulty) =
                 Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32)
                     .await;
+
+            // Logging the best difficulty found
+            println!(
+                "{}",
+                format!("Best difficulty found: {}", best_difficulty).cyan().bold()
+            );
 
             // Exit if the best difficulty is below the threshold
             if best_difficulty < min_difficulty_threshold {
