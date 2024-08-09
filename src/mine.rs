@@ -23,7 +23,6 @@ use crate::{
     },
     Miner,
 };
-
 impl Miner {
     pub async fn mine(&self, args: MineArgs) {
         // Initialize difficulty threshold
@@ -48,7 +47,7 @@ impl Miner {
             println!(
                 "\n\nStake: {} ORE\n{}  Multiplier: {:12}x",
                 amount_u64_to_string(proof.balance),
-                if last_hash_at > 0 {
+                if last_hash_at.gt(&0) {
                     format!(
                         "  Change: {} ORE\n",
                         amount_u64_to_string(proof.balance.saturating_sub(last_balance))
@@ -64,18 +63,21 @@ impl Miner {
             // Calculate cutoff time
             let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
 
-            // Run drillx
-            let solution = Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32).await;
+            // Run drillx to find the best solution and its difficulty
+            let (solution, best_difficulty) =
+                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32)
+                    .await;
 
-            // If the best difficulty is below the threshold, exit the program
-            if solution.difficulty() < min_difficulty_threshold {
+            // Exit if the best difficulty is below the threshold
+            if best_difficulty < min_difficulty_threshold {
                 eprintln!(
                     "{}",
                     format!(
-                        "Exiting: Best difficulty ({}) is below the threshold ({})",
-                        solution.difficulty(),
-                        min_difficulty_threshold
-                    ).red().bold()
+                        "Exiting: best difficulty ({}) is below the threshold ({})",
+                        best_difficulty, min_difficulty_threshold
+                    )
+                    .red()
+                    .bold()
                 );
                 std::process::exit(1);
             }
@@ -108,7 +110,7 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
-    ) -> Solution {
+    ) -> (Solution, u32) {
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
         let global_best_difficulty = Arc::new(RwLock::new(0u32));
@@ -124,7 +126,7 @@ impl Miner {
                     let mut memory = equix::SolverMemory::new();
                     move || {
                         // Return if core should not be used
-                        if (i.id as u64) >= cores {
+                        if (i.id as u64).ge(&cores) {
                             return (0, 0, Hash::default());
                         }
 
@@ -145,11 +147,11 @@ impl Miner {
                                 &nonce.to_le_bytes(),
                             ) {
                                 let difficulty = hx.difficulty();
-                                if difficulty > best_difficulty {
+                                if difficulty.gt(&best_difficulty) {
                                     best_nonce = nonce;
                                     best_difficulty = difficulty;
                                     best_hash = hx;
-                                    if best_difficulty > *global_best_difficulty.read().unwrap()
+                                    if best_difficulty.gt(&*global_best_difficulty.read().unwrap())
                                     {
                                         *global_best_difficulty.write().unwrap() = best_difficulty;
                                     }
@@ -160,14 +162,14 @@ impl Miner {
                             if nonce % 100 == 0 {
                                 let global_best_difficulty =
                                     *global_best_difficulty.read().unwrap();
-                                if timer.elapsed().as_secs() >= cutoff_time {
+                                if timer.elapsed().as_secs().ge(&cutoff_time) {
                                     if i.id == 0 {
                                         progress_bar.set_message(format!(
                                             "Mining... (difficulty {})",
                                             global_best_difficulty,
                                         ));
                                     }
-                                    if global_best_difficulty >= min_difficulty {
+                                    if global_best_difficulty.ge(&min_difficulty) {
                                         // Mine until min difficulty has been met
                                         break;
                                     }
@@ -187,14 +189,14 @@ impl Miner {
                             nonce += 1;
                         }
 
-                        // Return the best nonce
+                        // Return the best nonce and difficulty
                         (best_nonce, best_difficulty, best_hash)
                     }
                 })
             })
             .collect();
 
-        // Join handles and return best nonce
+        // Join handles and return the best nonce and difficulty
         let mut best_nonce = 0;
         let mut best_difficulty = 0;
         let mut best_hash = Hash::default();
@@ -215,12 +217,12 @@ impl Miner {
             best_difficulty
         ));
 
-        Solution::new(best_hash.d, best_nonce.to_le_bytes())
+        (Solution::new(best_hash.d, best_nonce.to_le_bytes()), best_difficulty)
     }
 
     pub fn check_num_cores(&self, cores: u64) {
         let num_cores = num_cpus::get() as u64;
-        if cores > num_cores {
+        if cores.gt(&num_cores) {
             println!(
                 "{} Cannot exceed available cores ({})",
                 "WARNING".bold().yellow(),
@@ -256,7 +258,7 @@ impl Miner {
             for account in accounts {
                 if let Some(account) = account {
                     if let Ok(bus) = Bus::try_from_bytes(&account.data) {
-                        if bus.rewards > top_bus_balance {
+                        if bus.rewards.gt(&top_bus_balance) {
                             top_bus_balance = bus.rewards;
                             top_bus = BUS_ADDRESSES[bus.id as usize];
                         }
@@ -273,7 +275,7 @@ impl Miner {
 }
 
 fn calculate_multiplier(balance: u64, top_balance: u64) -> f64 {
-    1.0 + (balance as f64 / top_balance as f64).min(1.0)
+    1.0 + (balance as f64 / top_balance as f64).min(1.0f64)
 }
 
 fn format_duration(seconds: u32) -> String {
