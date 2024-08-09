@@ -178,7 +178,7 @@ impl Miner {
                         }
 
                         // Check if the best difficulty is below the threshold
-                        if best_difficulty < min_difficulty_threshold {
+                        if best_difficulty < min_difficulty_threshold && best_difficulty != global_best_difficulty{
                             eprintln!(
                                 "{}",
                                 format!("Exiting: best difficulty ({}) is below the threshold ({})",
