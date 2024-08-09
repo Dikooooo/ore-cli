@@ -36,74 +36,62 @@ impl Miner {
         // Check num threads
         self.check_num_cores(args.cores);
 
-        // Start mining loop
+        // Start mining once
         let mut last_hash_at = 0;
         let mut last_balance = 0;
-        loop {
-            // Fetch proof
-            let config = get_config(&self.rpc_client).await;
-            let proof =
-                get_updated_proof_with_authority(&self.rpc_client, signer.pubkey(), last_hash_at)
-                    .await;
-            println!(
-                "\n\nStake: {} ORE\n{}  Multiplier: {:12}x",
-                amount_u64_to_string(proof.balance),
-                if last_hash_at.gt(&0) {
-                    format!(
-                        "  Change: {} ORE\n",
-                        amount_u64_to_string(proof.balance.saturating_sub(last_balance))
-                    )
-                } else {
-                    "".to_string()
-                },
-                calculate_multiplier(proof.balance, config.top_balance)
-            );
-            last_hash_at = proof.last_hash_at;
-            last_balance = proof.balance;
+        
+        // Fetch proof
+        let config = get_config(&self.rpc_client).await;
+        let proof =
+            get_updated_proof_with_authority(&self.rpc_client, signer.pubkey(), last_hash_at)
+                .await;
+        println!(
+            "\n\nStake: {} ORE\n{}  Multiplier: {:12}x",
+            amount_u64_to_string(proof.balance),
+            if last_hash_at.gt(&0) {
+                format!(
+                    "  Change: {} ORE\n",
+                    amount_u64_to_string(proof.balance.saturating_sub(last_balance))
+                )
+            } else {
+                "".to_string()
+            },
+            calculate_multiplier(proof.balance, config.top_balance)
+        );
+        last_hash_at = proof.last_hash_at;
+        last_balance = proof.balance;
 
-            // Calculate cutoff time
-            let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
+        // Calculate cutoff time
+        let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
 
-            // Run drillx to find the best solution and its difficulty
-            let (solution, best_difficulty) =
-                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32)
-                    .await;
+        // Run drillx
+        let solution =
+            Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold)
+                .await;
 
-            // Exit if the best difficulty is below the threshold
-            if best_difficulty < min_difficulty_threshold {
-                eprintln!(
-                    "{}",
-                    format!(
-                        "Exiting: best difficulty ({}) is below the threshold ({})",
-                        best_difficulty, min_difficulty_threshold
-                    )
-                    .red()
-                    .bold()
-                );
-                std::process::exit(1);
-            }
-
-            // Build instruction set
-            let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
-            let mut compute_budget = 500_000;
-            if self.should_reset(config).await && rand::thread_rng().gen_range(0..100).eq(&0) {
-                compute_budget += 100_000;
-                ixs.push(ore_api::instruction::reset(signer.pubkey()));
-            }
-
-            // Build mine ix
-            ixs.push(ore_api::instruction::mine(
-                signer.pubkey(),
-                signer.pubkey(),
-                self.find_bus().await,
-                solution,
-            ));
-
-            // Submit transaction
-            self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
-                .await
-                .ok();
+        // Build instruction set
+        let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
+        let mut compute_budget = 500_000;
+        if self.should_reset(config).await && rand::thread_rng().gen_range(0..100).eq(&0) {
+            compute_budget += 100_000;
+            ixs.push(ore_api::instruction::reset(signer.pubkey()));
         }
+
+        // Build mine ix
+        ixs.push(ore_api::instruction::mine(
+            signer.pubkey(),
+            signer.pubkey(),
+            self.find_bus().await,
+            solution,
+        ));
+
+        // Submit transaction
+        self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
+            .await
+            .ok();
+
+        // Exit after one mining attempt
+        println!("Completed one mining attempt.");
     }
 
     async fn find_hash_par(
@@ -111,7 +99,8 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
-    ) -> (Solution, u32) {
+        min_difficulty_threshold: u32, // New parameter for the threshold
+    ) -> Solution {
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
         let global_best_difficulty = Arc::new(RwLock::new(0u32));
@@ -190,14 +179,25 @@ impl Miner {
                             nonce += 1;
                         }
 
-                        // Return the best nonce and difficulty
+                        // Check if the best difficulty is below the threshold
+                        if best_difficulty < min_difficulty_threshold {
+                            eprintln!(
+                                "{}",
+                                format!("Best difficulty ({}) is below the threshold ({})",
+                                        best_difficulty,
+                                        min_difficulty_threshold
+                                ).red().bold()
+                            );
+                        }
+
+                        // Return the best nonce
                         (best_nonce, best_difficulty, best_hash)
                     }
                 })
             })
             .collect();
 
-        // Join handles and return the best nonce and difficulty
+        // Join handles and return best nonce
         let mut best_nonce = 0;
         let mut best_difficulty = 0;
         let mut best_hash = Hash::default();
@@ -218,7 +218,18 @@ impl Miner {
             best_difficulty
         ));
 
-        (Solution::new(best_hash.d, best_nonce.to_le_bytes()), best_difficulty)
+        // Print difficulty check message
+        if best_difficulty < min_difficulty_threshold {
+            eprintln!(
+                "{}",
+                format!("Best difficulty ({}) is below the threshold ({})",
+                        best_difficulty,
+                        min_difficulty_threshold
+                ).red().bold()
+            );
+        }
+
+        Solution::new(best_hash.d, best_nonce.to_le_bytes())
     }
 
     pub fn check_num_cores(&self, cores: u64) {
