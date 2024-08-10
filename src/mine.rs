@@ -33,7 +33,7 @@ impl Miner {
         let signer = self.signer();
         self.open().await;
 
-        // Check num threads
+        // Check num cores
         self.check_num_cores(args.cores);
 
         // Start mining loop
@@ -64,23 +64,21 @@ impl Miner {
             // Calculate cutoff time
             let cutoff_time = self.get_cutoff(proof, args.buffer_time).await;
 
-            // Run drillx to find the solution
-            let solution =
+            // Run drillx and receive both Solution and difficulty
+            let (solution, difficulty) =
                 Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32, min_difficulty_threshold)
                     .await;
 
-            // Check if the solution meets the difficulty threshold
-            if solution.difficulty < min_difficulty_threshold {
+            // Check if difficulty is below the threshold
+            if difficulty < min_difficulty_threshold {
                 println!(
                     "{}",
                     format!(
-                        "Low difficulty found ({}), continuing to next iteration...",
-                        solution.difficulty
-                    )
-                    .red()
-                    .bold()
+                        "Difficulty {} is below threshold {}. Skipping this solution.",
+                        difficulty, min_difficulty_threshold
+                    ).red().bold()
                 );
-                continue; // Skip the rest of the loop and start the next iteration
+                continue;  // Skip the rest of the loop and go to the next iteration
             }
 
             // Build instruction set
@@ -111,8 +109,8 @@ impl Miner {
         cutoff_time: u64,
         cores: u64,
         min_difficulty: u32,
-        min_difficulty_threshold: u32, // New parameter for the threshold
-    ) -> Solution {
+        min_difficulty_threshold: u32,
+    ) -> (Solution, u32) {  // Return a tuple with Solution and difficulty
         // Dispatch job to each thread
         let progress_bar = Arc::new(spinner::new_progress_bar());
         let global_best_difficulty = Arc::new(RwLock::new(0u32));
@@ -191,6 +189,18 @@ impl Miner {
                             nonce += 1;
                         }
 
+                        // Check if the best difficulty is below the threshold
+                        if best_difficulty < min_difficulty_threshold {
+                            eprintln!(
+                                "{}",
+                                format!("Exiting: best difficulty ({}) is below the threshold ({})",
+                                        best_difficulty,
+                                        min_difficulty_threshold
+                                ).red().bold()
+                            );
+                            std::process::exit(1);
+                        }
+
                         // Return the best nonce
                         (best_nonce, best_difficulty, best_hash)
                     }
@@ -219,7 +229,7 @@ impl Miner {
             best_difficulty
         ));
 
-        Solution::new(best_hash.d, best_nonce.to_le_bytes())
+        (Solution::new(best_hash.d, best_nonce.to_le_bytes()), best_difficulty)
     }
 
     pub fn check_num_cores(&self, cores: u64) {
