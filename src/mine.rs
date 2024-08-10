@@ -70,16 +70,7 @@ impl Miner {
                     .await;
 
             // Check if difficulty is below the threshold
-            if difficulty < min_difficulty_threshold {
-                println!(
-                    "{}",
-                    format!(
-                        "Difficulty {} is below threshold {}. Skipping this solution.",
-                        difficulty, min_difficulty_threshold
-                    ).red().bold()
-                );
-                continue;  // Skip the rest of the loop and go to the next iteration
-            }
+            
 
             // Build instruction set
             let mut ixs = vec![ore_api::instruction::auth(proof_pubkey(signer.pubkey()))];
@@ -96,6 +87,17 @@ impl Miner {
                 self.find_bus().await,
                 solution,
             ));
+
+            if difficulty < min_difficulty_threshold {
+                println!(
+                    "{}",
+                    format!(
+                        "Difficulty {} is below threshold {}. Skipping this solution.",
+                        difficulty, min_difficulty_threshold
+                    ).red().bold()
+                );
+                continue;  // Skip the rest of the loop and go to the next iteration
+            }
 
             // Submit transaction
             self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
