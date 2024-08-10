@@ -198,7 +198,6 @@ impl Miner {
                                         min_difficulty_threshold
                                 ).red().bold()
                             );
-                            std::process::exit(1);
                         }
 
                         // Return the best nonce
